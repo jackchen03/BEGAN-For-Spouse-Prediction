@@ -1,6 +1,20 @@
 import torch.nn as nn
 import torch.nn.functional as F
 
+class Upsample_subpixel(nn.Module):
+    def __init__(self, dim, scale_factor=2):
+        super(Upsample_subpixel, self).__init__()
+        self.block = nn.Sequential(
+            nn.Conv2d(dim, dim*4, kernel_size=3, stride=1, padding=1),
+            nn.PixelShuffle(scale_factor),
+            nn.ReLU()           
+        )
+
+    def forward(self, input):
+        x = self.block(input)
+
+        return x
+
 class Generator(nn.Module):
     def __init__(self, opt, disc=False):
         super(Generator, self).__init__()
@@ -14,13 +28,22 @@ class Generator(nn.Module):
         self.l0 = nn.Linear(self.h, 8*8*self.num_channel)
         self.l1 = nn.Conv2d(self.num_channel, self.num_channel, 3, 1, 1)
         self.l2 = nn.Conv2d(self.num_channel, self.num_channel, 3, 1, 1)
-        self.up1 = nn.UpsamplingNearest2d(scale_factor=2)
+        if opt.upsample_type == 'nearest':
+            self.up1 = nn.UpsamplingNearest2d(scale_factor=2)
+        if opt.upsample_type == 'pixelcnn':
+            self.up1 = Upsample_subpixel(self.num_channel)
         self.l3 = nn.Conv2d(self.num_channel, self.num_channel, 3, 1, 1)
         self.l4 = nn.Conv2d(self.num_channel, self.num_channel, 3, 1, 1)
-        self.up2 = nn.UpsamplingNearest2d(scale_factor=2)
+        if opt.upsample_type == 'nearest':
+            self.up2 = nn.UpsamplingNearest2d(scale_factor=2)
+        if opt.upsample_type == 'pixelcnn':
+            self.up2 = Upsample_subpixel(self.num_channel)
         self.l5 = nn.Conv2d(self.num_channel, self.num_channel, 3, 1, 1)
         self.l6 = nn.Conv2d(self.num_channel, self.num_channel, 3, 1, 1)
-        self.up3 = nn.UpsamplingNearest2d(scale_factor=2)
+        if opt.upsample_type == 'nearest':
+            self.up3 = nn.UpsamplingNearest2d(scale_factor=2)
+        if opt.upsample_type == 'pixelcnn':
+            self.up3 = Upsample_subpixel(self.num_channel)
         self.l7 = nn.Conv2d(self.num_channel, self.num_channel, 3, 1, 1)
         self.l8 = nn.Conv2d(self.num_channel, self.num_channel, 3, 1, 1)
         if self.scale_size == 128:
@@ -73,13 +96,22 @@ class Decoder(nn.Module):
         self.l0 = nn.Linear(self.h, 8*8*self.num_channel)
         self.l1 = nn.Conv2d(self.num_channel, self.num_channel, 3, 1, 1)
         self.l2 = nn.Conv2d(self.num_channel, self.num_channel, 3, 1, 1)
-        self.up1 = nn.UpsamplingNearest2d(scale_factor=2)
+        if opt.upsample_type == 'nearest':
+            self.up1 = nn.UpsamplingNearest2d(scale_factor=2)
+        if opt.upsample_type == 'pixelcnn':
+            self.up1 = Upsample_subpixel(self.num_channel)
         self.l3 = nn.Conv2d(self.num_channel, self.num_channel, 3, 1, 1)
         self.l4 = nn.Conv2d(self.num_channel, self.num_channel, 3, 1, 1)
-        self.up2 = nn.UpsamplingNearest2d(scale_factor=2)
+        if opt.upsample_type == 'nearest':
+            self.up2 = nn.UpsamplingNearest2d(scale_factor=2)
+        if opt.upsample_type == 'pixelcnn':
+            self.up2 = Upsample_subpixel(self.num_channel)
         self.l5 = nn.Conv2d(self.num_channel, self.num_channel, 3, 1, 1)
         self.l6 = nn.Conv2d(self.num_channel, self.num_channel, 3, 1, 1)
-        self.up3 = nn.UpsamplingNearest2d(scale_factor=2)
+        if opt.upsample_type == 'nearest':
+            self.up3 = nn.UpsamplingNearest2d(scale_factor=2)
+        if opt.upsample_type == 'pixelcnn':
+            self.up3 = Upsample_subpixel(self.num_channel)
         self.l7 = nn.Conv2d(self.num_channel, self.num_channel, 3, 1, 1)
         self.l8 = nn.Conv2d(self.num_channel, self.num_channel, 3, 1, 1)
         if self.scale_size == 128:

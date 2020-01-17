@@ -44,6 +44,7 @@ parser.add_argument('--l_type', default=1, type=int)
 parser.add_argument('--tanh', default=1, type=int)
 parser.add_argument('--manualSeed', default=5451, type=int)
 parser.add_argument('--train', default=1, type=int)
+parser.add_argument('--upsample_type', default='pixelcnn', type=str, choices=['pixelcnn', 'nearest'])
 opt = parser.parse_args()
 
 
@@ -120,17 +121,17 @@ class BEGAN():
         #print type(sample)
         #im = Image.fromarray(sample.astype('uint8'))
         #im.save('128.png')
-        vutils.save_image(sample.data, '%s_%s_gen.png'%(opt.model_name, str(step)), nrow=nrow, normalize=True)
+        vutils.save_image(sample.data, '%s/%s_%s_gen.png'%(self.sample_dir, opt.model_name, str(step)), nrow=nrow, normalize=True)
         #f = open('%s/%s_gen.mat'%(self.sample_dir, opt.model_name), 'w')
         #np.save(f, sample.data.cpu().numpy())
         #recon = self.disc(self.fixed_x)
         if recon is not None:
-            vutils.save_image(recon.data, '%s_%s_disc.png'%(opt.model_name, str(step)), nrow=nrow, normalize=True)
+            vutils.save_image(recon.data, '%s/%s_%s_disc.png'%(self.sample_dir, opt.model_name, str(step)), nrow=nrow, normalize=True)
 
     def save_models(self, step):
         torch.save(self.gen.state_dict(), os.path.join(self.gen_save_path, 'gen_%d.pth'%step)) 
         torch.save(self.disc.state_dict(), os.path.join(self.disc_save_path, 'disc_%d.pth'%step)) 
-        self.write_config(step)
+        # self.write_config(step)
 
     def load_models(self, step):
         self.gen.load_state_dict(torch.load(os.path.join(self.gen_save_path, 'gen_%d.pth'%step)))   

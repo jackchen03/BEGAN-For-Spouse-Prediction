@@ -29,7 +29,7 @@ parser.add_argument('--cuda', action='store_true')
 parser.add_argument('--b_size', default=16, type=int)
 parser.add_argument('--h', default=64, type=int)
 parser.add_argument('--nc', default=64, type=int)
-parser.add_argument('--epochs', default=700, type=int)
+parser.add_argument('--epochs', default=2000, type=int)
 parser.add_argument('--lr', default=0.0001, type=float)
 parser.add_argument('--lr_update_step', default=3000, type=int)
 parser.add_argument('--lr_update_type', default=1, type=int)
@@ -40,9 +40,9 @@ parser.add_argument('--k', default=0, type=float)
 parser.add_argument('--scale_size', default=64, type=int)
 parser.add_argument('--model_name', default='test2')
 parser.add_argument('--base_path', default='./')
-parser.add_argument('--data_path', default='../dataset/FID_align/')
-parser.add_argument('--dec_load_path', default='celebA/experiments/test2/models/gen_200000.pth') 
-parser.add_argument('--dis_load_path', default='celebA/experiments/test2/models/disc_200000.pth')
+parser.add_argument('--data_path', default='../dataset/FID_64_repli_align/')
+parser.add_argument('--dec_load_path', default='celebA_64multi_pixelshuffle/experiments/test2/models/gen_328000.pth') 
+parser.add_argument('--dis_load_path', default='celebA_64multi_pixelshuffle/experiments/test2/models/disc_328000.pth')
 parser.add_argument('--load_step', default=0, type=int)
 parser.add_argument('--print_step', default=1000, type=int)
 parser.add_argument('--num_workers', default=12, type=int)
@@ -50,6 +50,14 @@ parser.add_argument('--l_type', default=1, type=int)
 parser.add_argument('--tanh', default=1, type=int)
 parser.add_argument('--manualSeed', default=5451, type=int)
 parser.add_argument('--train', default=1, type=int)
+parser.add_argument('--upsample_type', default='pixelcnn', type=str, choices=['pixelcnn', 'nearest'])
+parser.add_argument('--g_pretrain', default=False, type=bool)
+parser.add_argument('--lambda_g', default=30.0, type=float)
+parser.add_argument('--lambda_kl', default=100, type=float)
+parser.add_argument('--lambda_per', default=0.05, type=float)
+parser.add_argument('--lambda_l1', default=10.0, type=float)
+
+
 opt = parser.parse_args()
 
 
@@ -110,7 +118,7 @@ class Mom_predict():
 	
 	def build_model(self):
 		self.En = Spouse_Encoder(opt)
-		self.De = Decoder(opt)
+		self.De = Generator(opt)
 		self.Dis = Discriminator(opt)
 		# print (self.En)
 		# print ("====================")
@@ -118,15 +126,16 @@ class Mom_predict():
 		#disc.apply(weights_init)
 		#gen.apply(weights_init)
 		step = opt.load_step
-		self.De.load_state_dict(torch.load(self.Dec_load_path)) 
-		self.De.eval()
+		if opt.g_pretrain == True:
+			self.De.load_state_dict(torch.load(self.Dec_load_path)) 
+		# self.De.eval()
 		self.Dis.load_state_dict(torch.load(self.Dis_load_path))
 		self.Dis.eval()
 
 		if opt.load_step > 0:
 			self.load_models(opt.load_step)
 
-	def generate(self, input, target, sample, step, nrow=8):
+	def generate(self, input, target, sample, residual, warped_input, step, nrow=8):
 		#sample = self.gen(fake)
 		#print sample.size()
 		#return
@@ -138,6 +147,8 @@ class Mom_predict():
 		vutils.save_image(input.data, '%s/%s_%s_son.png'%(self.sample_dir, opt.model_name, str(step)), nrow=nrow, normalize=True)
 		vutils.save_image(target.data, '%s/%s_%s_mom_target.png'%(self.sample_dir, opt.model_name, str(step)), nrow=nrow, normalize=True)
 		vutils.save_image(sample.data, '%s/%s_%s_mom_pred.png'%(self.sample_dir, opt.model_name, str(step)), nrow=nrow, normalize=True)
+		vutils.save_image(residual.data, '%s/%s_%s)_residual.png'%(self.sample_dir, opt.model_name, str(step)), nrow=nrow, normalize=True)
+		vutils.save_image(warped_input.data, '%s/%s_%s)_warped_input.png'%(self.sample_dir, opt.model_name, str(step)), nrow=nrow, normalize=True)
 		#f = open('%s/%s_gen.mat'%(self.sample_dir, opt.model_name), 'w')
 		#np.save(f, sample.data.cpu().numpy())
 		#recon = self.disc(self.fixed_x)
@@ -148,7 +159,7 @@ class Mom_predict():
 	def save_models(self, step):
 		torch.save(self.En.state_dict(), os.path.join(self.En_save_path, 'En_%d.pth'%step)) 
 		torch.save(self.De.state_dict(), os.path.join(self.En_save_path, 'De_%d.pth'%step))		 
-		torch.save(self.Dis.state_dict(), os.path.join(self.En_save_path, 'Dis3_%d.pth'%step)) 
+		# torch.save(self.Dis.state_dict(), os.path.join(self.En_save_path, 'Dis3_%d.pth'%step)) 
 
 	def load_models(self, step):
 		self.En.load_state_dict(torch.load(os.path.join(self.En_save_path, 'En_%d.pth'%step)))	 
@@ -193,9 +204,41 @@ class Mom_predict():
 		else:
 			return self.criterion(outputs_g_z, gen_z)
 
+	def warp(self, x, flo):
+		"""
+		warp an image/tensor (im2) back to im1, according to the optical flow
+		x: [B, C, H, W] (im2)
+		flo: [B, 2, H, W] flow
+		"""
+		B, C, H, W = x.size()
+		# mesh grid 
+		xx = torch.arange(0, W).view(1,-1).repeat(H,1)
+		yy = torch.arange(0, H).view(-1,1).repeat(1,W)
+		xx = xx.view(1,1,H,W).repeat(B,1,1,1)
+		yy = yy.view(1,1,H,W).repeat(B,1,1,1)
+		grid = torch.cat((xx,yy),1).float()
+
+		if x.is_cuda:
+			grid = grid.cuda()
+		vgrid = Variable(grid) + flo
+
+		# scale grid to [-1,1] 
+		vgrid[:,0,:,:] = 2.0*vgrid[:,0,:,:].clone() / max(W-1,1)-1.0
+		vgrid[:,1,:,:] = 2.0*vgrid[:,1,:,:].clone() / max(H-1,1)-1.0
+
+		vgrid = vgrid.permute(0,2,3,1)		
+		output = nn.functional.grid_sample(x, vgrid)
+		mask = torch.autograd.Variable(torch.ones(x.size())).cuda()
+		mask = nn.functional.grid_sample(mask, vgrid)
+			
+		mask[mask<0.999] = 0
+		mask[mask>0] = 1
+		
+		return output*mask
+
 	def train(self):
 		optimizer_En = torch.optim.Adam(self.En.parameters(), betas=(0.5, 0.999), lr=opt.lr)
-		# optimizer_De = torch.optim.Adam(self.De.parameters(), betas=(0.5, 0.999), lr=opt.lr)
+		optimizer_De = torch.optim.Adam(self.De.parameters(), betas=(0.5, 0.999), lr=opt.lr)
 		# optimizer_Dis = torch.optim.Adam(self.Dis.parameters(), betas=(0.5, 0.999), lr=opt.lr)
 		# measure_history = deque([0]*opt.lr_update_step, opt.lr_update_step)
 
@@ -218,26 +261,31 @@ class Mom_predict():
 				# print(encoded_feat[1])
 				e = torch.randn(input_son.shape[0], 64).cuda()
 				encoded_feat = torch.exp(sigma)*e + m
-				pred_mom = self.De(encoded_feat) + input_son
+				img_pred, flow_pred = self.De(encoded_feat)
+				warped_son = self.warp(input_son, flow_pred)
+				pred_mom = img_pred + warped_son
 
 				optimizer_En.zero_grad()
+				optimizer_De.zero_grad()
 				outputs_g_z = self.Dis(pred_mom)
-				g_loss = 20 * self.compute_gen_loss(outputs_g_z, pred_mom)
-				kl_loss =  100 * ( torch.exp(sigma) - (torch.ones(input_son.shape[0], 64).cuda() + sigma) + m**2 ).mean()
-				perceptual_loss = 0.05 * (self.compute_perceptual_loss(pred_mom, target_mom) + self.compute_perceptual_loss(pred_mom, input_son))
+				g_loss = opt.lambda_g * self.compute_gen_loss(outputs_g_z, pred_mom)
+				kl_loss =  opt.lambda_kl * ( torch.exp(sigma) - (torch.ones(input_son.shape[0], 64).cuda() + sigma) + m**2 ).mean()
+				# perceptual_loss = 0.05 * self.compute_perceptual_loss(pred_mom, target_mom)
+				perceptual_loss = opt.lambda_per * (self.compute_perceptual_loss(pred_mom, target_mom) + self.compute_perceptual_loss(pred_mom, input_son))
 				# perceptual_loss = self.criterion_perceptual(pred_mom, target_mom).mean()  + self.criterion_perceptual(pred_mom, input_son).mean()
-				l1_loss = self.criterion_l1(pred_mom, target_mom)
+				l1_loss = opt.lambda_l1 * self.criterion_l1(pred_mom, target_mom)
 				loss = g_loss + perceptual_loss + l1_loss + kl_loss 
 				# loss = self.criterion_l1(pred_mom, target_mom)
 				loss.backward()
 				optimizer_En.step()
+				optimizer_De.step()
 
 				if self.global_step%opt.print_step == 0:
 					print ( 
 						"Step: %d, Epochs: %d, Loss : %.9f, KL Loss: %.9f, Per Loss: %.9f, Recon Loss: %.9f, Gen Loss: %.9f, lr:%.9f"% 
 						(self.global_step, i, loss.item(), kl_loss.item(), perceptual_loss.item(), l1_loss.item(), g_loss.item(), lr) 
 					)
-					self.generate(input_son, target_mom, pred_mom, self.global_step)
+					self.generate(input_son, target_mom, pred_mom, img_pred, warped_son, self.global_step)
 			   
 				if opt.lr_update_type == 1:
 					lr = opt.lr* 0.95 ** (self.global_step//opt.lr_update_step)

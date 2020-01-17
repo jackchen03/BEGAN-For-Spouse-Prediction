@@ -29,7 +29,7 @@ parser.add_argument('--cuda', action='store_true')
 parser.add_argument('--b_size', default=16, type=int)
 parser.add_argument('--h', default=64, type=int)
 parser.add_argument('--nc', default=64, type=int)
-parser.add_argument('--epochs', default=700, type=int)
+parser.add_argument('--epochs', default=2000, type=int)
 parser.add_argument('--lr', default=0.0001, type=float)
 parser.add_argument('--lr_update_step', default=3000, type=int)
 parser.add_argument('--lr_update_type', default=1, type=int)
@@ -50,6 +50,8 @@ parser.add_argument('--l_type', default=1, type=int)
 parser.add_argument('--tanh', default=1, type=int)
 parser.add_argument('--manualSeed', default=5451, type=int)
 parser.add_argument('--train', default=1, type=int)
+parser.add_argument('--upsample_type', default='pixelcnn', type=str, choices=['pixelcnn', 'nearest'])
+
 opt = parser.parse_args()
 
 
@@ -85,8 +87,8 @@ class Mom_predict():
 
 		if opt.cuda:
 			self.set_cuda()
-			self.cuda() = True
-		else: self.cuda() = False
+			self.cuda = True
+		else: self.cuda = False
 
 	def set_cuda(self):
 		self.vgg.cuda()
@@ -195,37 +197,6 @@ class Mom_predict():
 		else:
 			return self.criterion(outputs_g_z, gen_z)
 
-	def warp(self, x, flo):
-		"""
-		warp an image/tensor (im2) back to im1, according to the optical flow
-		x: [B, C, H, W] (im2)
-		flo: [B, 2, H, W] flow
-		"""
-		B, C, H, W = x.size()
-		# mesh grid 
-		xx = torch.arange(0, W).view(1,-1).repeat(H,1)
-		yy = torch.arange(0, H).view(-1,1).repeat(1,W)
-		xx = xx.view(1,1,H,W).repeat(B,1,1,1)
-		yy = yy.view(1,1,H,W).repeat(B,1,1,1)
-		grid = torch.cat((xx,yy),1).float()
-
-		if x.is_cuda:
-			grid = grid.cuda()
-		vgrid = Variable(grid) + flo
-
-		# scale grid to [-1,1] 
-		vgrid[:,0,:,:] = 2.0*vgrid[:,0,:,:].clone() / max(W-1,1)-1.0
-		vgrid[:,1,:,:] = 2.0*vgrid[:,1,:,:].clone() / max(H-1,1)-1.0
-
-		vgrid = vgrid.permute(0,2,3,1)		
-		output = nn.functional.grid_sample(x, vgrid)
-		mask = torch.autograd.Variable(torch.ones(x.size())).cuda()
-		mask = nn.functional.grid_sample(mask, vgrid)
-			
-		mask[mask<0.999] = 0
-		mask[mask>0] = 1
-		
-		return output*mask
 
 	def train(self):
 		optimizer_En = torch.optim.Adam(self.En.parameters(), betas=(0.5, 0.999), lr=opt.lr)
@@ -258,7 +229,7 @@ class Mom_predict():
 				outputs_g_z = self.Dis(pred_mom)
 				g_loss = 20 * self.compute_gen_loss(outputs_g_z, pred_mom)
 				kl_loss =  50 * ( torch.exp(sigma) - (torch.ones(input_son.shape[0], 64).cuda() + sigma) + m**2 ).mean()
-				perceptual_loss = 0.05 * (self.compute_perceptual_loss(pred_mom, target_mom) + self.compute_perceptual_loss(pred_mom, input_son))
+				perceptual_loss = 0.01 * (self.compute_perceptual_loss(pred_mom, target_mom) + self.compute_perceptual_loss(pred_mom, input_son))
 				# perceptual_loss = self.criterion_perceptual(pred_mom, target_mom).mean()  + self.criterion_perceptual(pred_mom, input_son).mean()
 				l1_loss = self.criterion_l1(pred_mom, target_mom)
 				loss = g_loss + perceptual_loss + l1_loss + kl_loss 
