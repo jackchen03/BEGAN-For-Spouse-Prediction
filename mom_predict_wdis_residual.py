@@ -52,10 +52,11 @@ parser.add_argument('--manualSeed', default=5451, type=int)
 parser.add_argument('--train', default=1, type=int)
 parser.add_argument('--upsample_type', default='pixelcnn', type=str, choices=['pixelcnn', 'nearest'])
 parser.add_argument('--g_pretrain', default=False, type=bool)
-parser.add_argument('--lambda_g', default=30.0, type=float)
+parser.add_argument('--lambda_g', default=1.0, type=float)
+parser.add_argument('--lambda_d', default=1.0, type=float)
 parser.add_argument('--lambda_kl', default=100, type=float)
 parser.add_argument('--lambda_per', default=0.05, type=float)
-parser.add_argument('--lambda_l1', default=10.0, type=float)
+parser.add_argument('--lambda_l1', default=4.0, type=float)
 
 
 opt = parser.parse_args()
@@ -69,6 +70,8 @@ if opt.cuda:
 	opt.cuda = True
 	torch.cuda.set_device(opt.gpuid)
 	torch.cuda.manual_seed_all(opt.manualSeed)
+
+
 
 
 class Mom_predict():
@@ -115,23 +118,23 @@ class Mom_predict():
 			if not os.path.exists(path):
 				os.makedirs(path)
 		print("Generated samples saved in %s"%self.sample_dir)
-	
+
 	def build_model(self):
 		self.En = Spouse_Encoder(opt)
 		self.De = Generator(opt)
 		self.Dis = Discriminator(opt)
-		# print (self.En)
-		# print ("====================")
-		# print (self.De)
-		#disc.apply(weights_init)
-		#gen.apply(weights_init)
-		step = opt.load_step
+
+		# self.En.apply(weights_init)
+		# self.Dis.apply(weights_init)
 		if opt.g_pretrain == True:
 			self.De.load_state_dict(torch.load(self.Dec_load_path)) 
+		# else: 
+		# 	self.De.apply(weights_init)
 		# self.De.eval()
-		self.Dis.load_state_dict(torch.load(self.Dis_load_path))
-		self.Dis.eval()
+		# self.Dis.load_state_dict(torch.load(self.Dis_load_path))
+		# self.Dis.eval()
 
+		step = opt.load_step
 		if opt.load_step > 0:
 			self.load_models(opt.load_step)
 
@@ -188,21 +191,41 @@ class Mom_predict():
 
 		return dist
 
+	def compute_disc_loss(self, real_img, fake_img):
+		if opt.cuda:
+			valid = torch.ones(real_img.shape[0], 1).cuda()
+			fake = torch.zeros(real_img.shape[0], 1).cuda()
+		else:
+			valid = torch.ones(real_img.shape[0], 1)
+			fake = torch.zeros(real_img.shape[0], 1)
+		fake_loss = self.adversarial_loss(self.Dis(fake_img), fake)
+		real_loss = self.adversarial_loss(self.Dis(real_img), valid)
 
-	def compute_disc_loss(self, outputs_d_x, data, outputs_d_z, gen_z):
-		if opt.l_type == 1:
-			real_loss_d = torch.mean(torch.abs(outputs_d_x - data))
-			fake_loss_d = torch.mean(torch.abs(outputs_d_z - gen_z))
+		return fake_loss + real_loss
+
+	def compute_gen_loss(self, fake_img):
+		if opt.cuda:
+			valid = torch.ones(fake_img.shape[0], 1).cuda()
 		else:
-			real_loss_d = self.criterion(outputs_d_x, data)
-			fake_loss_d = self.criterion(outputs_d_z , gen_z.detach())
-		return (real_loss_d, fake_loss_d)
+			valid = torch.ones(fake_img.shape[0], 1)
+
+		loss = self.adversarial_loss(self.Dis(fake_img), valid)
+
+		return loss
+	# def compute_disc_loss(self, outputs_d_x, data, outputs_d_z, gen_z):
+	# 	if opt.l_type == 1:
+	# 		real_loss_d = torch.mean(torch.abs(outputs_d_x - data))
+	# 		fake_loss_d = torch.mean(torch.abs(outputs_d_z - gen_z))
+	# 	else:
+	# 		real_loss_d = self.criterion(outputs_d_x, data)
+	# 		fake_loss_d = self.criterion(outputs_d_z , gen_z.detach())
+	# 	return (real_loss_d, fake_loss_d)
 			
-	def compute_gen_loss(self, outputs_g_z, gen_z):
-		if opt.l_type == 1:
-			return torch.mean(torch.abs(outputs_g_z - gen_z))
-		else:
-			return self.criterion(outputs_g_z, gen_z)
+	# def compute_gen_loss(self, outputs_g_z, gen_z):
+	# 	if opt.l_type == 1:
+	# 		return torch.mean(torch.abs(outputs_g_z - gen_z))
+	# 	else:
+	# 		return self.criterion(outputs_g_z, gen_z)
 
 	def warp(self, x, flo):
 		"""
@@ -239,7 +262,7 @@ class Mom_predict():
 	def train(self):
 		optimizer_En = torch.optim.Adam(self.En.parameters(), betas=(0.5, 0.999), lr=opt.lr)
 		optimizer_De = torch.optim.Adam(self.De.parameters(), betas=(0.5, 0.999), lr=opt.lr)
-		# optimizer_Dis = torch.optim.Adam(self.Dis.parameters(), betas=(0.5, 0.999), lr=opt.lr)
+		optimizer_Dis = torch.optim.Adam(self.Dis.parameters(), betas=(0.5, 0.999), lr=opt.lr)
 		# measure_history = deque([0]*opt.lr_update_step, opt.lr_update_step)
 
 		# convergence_history = []
@@ -261,14 +284,22 @@ class Mom_predict():
 				# print(encoded_feat[1])
 				e = torch.randn(input_son.shape[0], 64).cuda()
 				encoded_feat = torch.exp(sigma)*e + m
+
 				img_pred, flow_pred = self.De(encoded_feat)
 				warped_son = self.warp(input_son, flow_pred)
 				pred_mom = img_pred + warped_son
 
+				# update discriminator
+				optimizer_Dis.zero_grad()
+				d_loss = opt.lambda_d * self.compute_disc_loss(target_mom, pred_mom.detach())
+				d_loss.backward()
+				optimizer_Dis.step()
+
+				# update generator
 				optimizer_En.zero_grad()
 				optimizer_De.zero_grad()
-				outputs_g_z = self.Dis(pred_mom)
-				g_loss = opt.lambda_g * self.compute_gen_loss(outputs_g_z, pred_mom)
+
+				g_loss = opt.lambda_g * self.compute_gen_loss(pred_mom)				
 				kl_loss =  opt.lambda_kl * ( torch.exp(sigma) - (torch.ones(input_son.shape[0], 64).cuda() + sigma) + m**2 ).mean()
 				# perceptual_loss = 0.05 * self.compute_perceptual_loss(pred_mom, target_mom)
 				perceptual_loss = opt.lambda_per * (self.compute_perceptual_loss(pred_mom, target_mom) + self.compute_perceptual_loss(pred_mom, input_son))
@@ -277,13 +308,15 @@ class Mom_predict():
 				loss = g_loss + perceptual_loss + l1_loss + kl_loss 
 				# loss = self.criterion_l1(pred_mom, target_mom)
 				loss.backward()
+
 				optimizer_En.step()
 				optimizer_De.step()
+				
 
 				if self.global_step%opt.print_step == 0:
 					print ( 
-						"Step: %d, Epochs: %d, Loss : %.9f, KL Loss: %.9f, Per Loss: %.9f, Recon Loss: %.9f, Gen Loss: %.9f, lr:%.9f"% 
-						(self.global_step, i, loss.item(), kl_loss.item(), perceptual_loss.item(), l1_loss.item(), g_loss.item(), lr) 
+						"Step: %d, Epochs: %d, Loss : %.9f, KL Loss: %.9f, Per Loss: %.9f, Recon Loss: %.9f, Gen Loss: %.9f, Dis Loss: %.9f, lr:%.9f"% 
+						(self.global_step, i, loss.item(), kl_loss.item(), perceptual_loss.item(), l1_loss.item(), g_loss.item(), d_loss.item(), lr) 
 					)
 					self.generate(input_son, target_mom, pred_mom, img_pred, warped_son, self.global_step)
 			   

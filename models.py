@@ -149,9 +149,9 @@ class Decoder(nn.Module):
         x = F.tanh(x)
         return x
 
-class Encoder(nn.Module):
+class Discriminator(nn.Module):
     def __init__(self, opt):
-        super(Encoder, self).__init__()
+        super(Discriminator, self).__init__()
         self.num_channel = opt.nc
         self.h = opt.h
         self.b_size = opt.b_size
@@ -177,7 +177,8 @@ class Encoder(nn.Module):
         if self.scale_size == 64:
             self.l7 = nn.Conv2d(3*self.num_channel, 3*self.num_channel, 3, 1, 1)
             self.l8 = nn.Conv2d(3*self.num_channel, 3*self.num_channel, 3, 1, 1)
-            self.l9 = nn.Linear(8*8*3*self.num_channel, 64)
+            self.l9 = nn.Linear(8*8*3*self.num_channel, 1)
+            self.sigmoid = nn.Sigmoid()
         elif self.scale_size == 128:
             self.l7 = nn.Conv2d(3*self.num_channel, 3*self.num_channel, 3, 1, 1)
             self.l8 = nn.Conv2d(3*self.num_channel, 3*self.num_channel, 3, 1, 1)
@@ -210,6 +211,7 @@ class Encoder(nn.Module):
             # print(x.shape)
             x = x.view(-1, 8*8*3*self.num_channel)
             x = self.l9(x)
+            x = self.sigmoid(x)
 
         else:
             x = F.elu(self.l7(x), True)
@@ -303,13 +305,13 @@ class Spouse_Encoder(nn.Module):
 
             return x
     
-class Discriminator(nn.Module):
-    def __init__(self, nc):
-        super(Discriminator, self).__init__()
-        self.enc = Encoder(nc)
-        self.dec = Decoder(nc, True)
-    def forward(self, input):
-        return self.dec(self.enc(input))
+# class Discriminator(nn.Module):
+#     def __init__(self, nc):
+#         super(Discriminator, self).__init__()
+#         self.enc = Encoder(nc)
+#         self.dec = Decoder(nc, True)
+#     def forward(self, input):
+#         return self.dec(self.enc(input))
 
 
 def weights_init(self, m):
